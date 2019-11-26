@@ -99,9 +99,12 @@ def write_misasm_broken_ctgs(contigs_file, breaks, out_prefix, in_gff=None, in_g
     os.chdir(current_path)
 
 
-def align_misasm_broken(out_prefix):
+def align_misasm_broken(out_prefix, args):
     current_path = os.getcwd()
     os.chdir('ctg_alignments')
+    minimap_path = args.m
+    t = args.t
+    reference_file = args.reference
 
     ctgs_file = out_prefix + ".misasm.break.fa"
     cmd = '{} -k19 -w19 -t{} {}  {} ' \
@@ -436,21 +439,23 @@ def write_broken_files(in_contigs, in_contigs_name, in_gff=None, in_gff_name=Non
     os.chdir(current_path)
 
 
-def align_breaks(break_type, m_path, in_reference_file, in_contigs_file, in_num_threads):
+def align_breaks(break_type, in_contigs_file, args):
     current_path = os.getcwd()
     os.chdir('chimera_break')
+    m_path = args.m
+    in_num_threads = args.t
+    in_reference_file = os.path.relpath(args.reference)
+    iindex = args.I
+    extras = args.mini_extra
+
     if break_type == 'inter':
-        cmd = '{} -k19 -w19 -t{} {} {} ' \
-          '> inter_contigs_against_ref.paf 2> inter_contigs_against_ref.paf.log'.format(m_path, in_num_threads,
-                                                                                        os.path.relpath(in_reference_file),
-                                                                                        in_contigs_file)
+        cmd = '{m_path} -k19 -w19 -t {in_num_threads} -I {iindex} {extras}  {in_reference_file} {in_contigs_file} ' \
+          '> inter_contigs_against_ref.paf 2> inter_contigs_against_ref.paf.log'.format(**locals())
         if not os.path.isfile('inter_contigs_against_ref.paf'):
             run(cmd)
     else:
-        cmd = '{} -k19 -w19 -t{} {} {} ' \
-              '> intra_contigs_against_ref.paf 2> intra_contigs_against_ref.paf.log'.format(m_path, in_num_threads,
-                                                                                            os.path.relpath(in_reference_file),
-                                                                                            in_contigs_file)
+        cmd = '{m_path} -k19 -w19 -t {in_num_threads} -I {iindex} {extras}  {in_reference_file} {in_contigs_file} ' \
+              '> intra_contigs_against_ref.paf 2> intra_contigs_against_ref.paf.log'.format(**locals())
         if not os.path.isfile('intra_contigs_against_ref.paf'):
             run(cmd)
 
@@ -597,7 +602,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
         write_broken_files(contigs_dict, out_inter_fasta)
 
     # Next, realign the chimera broken contigs
-    align_breaks('inter', minimap_path, reference_file, out_inter_fasta, t)
+    align_breaks('inter', minimap_path, args)
 
     # Now, use those new alignments for intrachromosomal chimeras
     log('Reading interchromosomal chimera broken alignments')
@@ -634,7 +639,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
 
     # Re align the contigs
     # Next, realign the chimera broken contigs
-    align_breaks('intra', minimap_path, reference_file, out_intra_fasta, t)
+    align_breaks('intra', minimap_path, args)
 
     # Read in alignments of intrachromosomal chimeras and proceed with ordering and orientation
     log('Reading intrachromosomal chimera broken alignments')
@@ -687,7 +692,7 @@ def chimera_breaker_with_reads(alns, contigs_file, corr_reads, features, args, l
         write_misasm_broken_ctgs(contigs_file, val_candidate_breaks, contigs_file[:contigs_file.rfind('.')])
 
     # Align the broken contigs back to the reference
-    align_misasm_broken(contigs_file[:contigs_file.rfind('.')])
+    align_misasm_broken(contigs_file[:contigs_file.rfind('.')], args)
     alns = read_paf_alignments(os.path.join('ctg_alignments', 'contigs_brk_against_ref.paf'))
     alns = clean_alignments(alns, l=1000, in_exclude_file=exclude_file)
     contigs_file = os.path.abspath(os.path.join('ctg_alignments',
