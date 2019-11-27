@@ -9,13 +9,15 @@ from ragoo_utilities.ContigAlignment import ContigAlignment
 from ragoo_utilities.ContigAlignment import UniqueContigAlignment
 from ragoo_utilities.ContigAlignment import LongestContigAlignment
 from ragoo_utilities.GFFReader import GFFReader
+from ragoo_utilities.utilities import clean_alignments
 import pysam
 from ragoo_utilities.utilities import run, log, reverse_complement
 from ragoo_utilities.break_chimera import get_ref_parts, cluster_contig_alns, avoid_gff_intervals, update_gff, break_contig, get_intra_contigs
 import os
 import argparse
 import re
-from collections import OrderedDict as odict
+import itertools
+from copy import deepcopy
 
 
 def update_misasm_features(features, breaks, contig, ctg_len):
@@ -141,35 +143,6 @@ def write_contig_clusters(unique_dict, thresh, skip_list):
                 print(i, this_confidence, sep="\t", file=out_file)
 
     os.chdir(current_path)
-
-
-def clean_alignments(in_alns, l=10000, in_exclude_file='', uniq_anchor_filter=False, merge=False, quality=0):
-    # Exclude alignments to undesired reference headers and filter alignment lengths.
-    exclude_list = []
-    if in_exclude_file:
-        with open(os.path.join('..', in_exclude_file)) as f:
-            for line in f:
-                exclude_list.append(line.rstrip().replace('>', '').split()[0])
-
-    empty_headers = []
-    for header in in_alns.keys():
-        in_alns[header].exclude_ref_chroms(exclude_list)
-        in_alns[header].filter_lengths(l)
-        if uniq_anchor_filter:
-            in_alns[header].unique_anchor_filter()
-        if quality:
-            in_alns[header].filter_quality(quality)
-
-        if merge:
-            in_alns[header].merge_alns()
-
-        # Check if our filtering has removed all alignments for a contig
-        if len(in_alns[header].ref_headers) == 0:
-            empty_headers.append(header)
-
-    for header in empty_headers:
-        in_alns.pop(header)
-    return in_alns
 
 
 def read_paf_alignments(in_paf):
@@ -298,7 +271,7 @@ def order_orient_contigs(in_unique_contigs, in_alns, use_quality=False):
             # There is a scope issue here. Pass this (longest_contigs) to the method explicitly.
             ref_pos.append((longest_contigs[contigs_list[i]].ref_start, longest_contigs[contigs_list[i]].ref_end, i))
 
-        final_order = odict((contigs_list[i[2]], (i[0], i[1])) for i in sorted(ref_pos))
+        final_order = OrderedDict((contigs_list[i[2]], (i[0], i[1])) for i in sorted(ref_pos))
 
         # Get ordering confidence
         # To do this, get the max and min alignments to this reference chromosome
@@ -559,60 +532,73 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     intra_wrt_ctg_min = args.c
     exclude_file = args.e
     minimap_path = args.m
-    reference_file = args.reference
-    t = args.t
     gff_file = args.gff
 
-    alns = clean_alignments(alns, l=10000, in_exclude_file=exclude_file, uniq_anchor_filter=True)
+    copied = deepcopy(alns)
+    ret_alns = clean_alignments(copied,
+                                l=min_len, in_exclude_file=exclude_file, uniq_anchor_filter=False)
     # Process contigs
+    print(ret_alns.keys(), min_len)
     log('Getting contigs')
-    contigs_dict = pysam.FastaFile(os.path.relpath(contigs_file))
+    contigs_fai = pysam.FastaFile(os.path.relpath(contigs_file))
 
     log('Finding interchromosomally chimeric contigs')
     all_chimeras = dict()
-    for i in alns.keys():
-        ref_parts = get_ref_parts(alns[i], min_len, min_break_pct, min_range)
+    for i in ret_alns.keys():
+        print(i)
+        ref_parts = get_ref_parts(ret_alns[i], min_len, min_break_pct, min_range)
         if len(ref_parts) > 1:
             all_chimeras[i] = ref_parts
 
     log('Finding break points and breaking interchromosomally chimeric contigs')
     break_intervals = dict()
+
+    contigs_dict = dict()
     for i in all_chimeras.keys():
-        break_intervals[i] = cluster_contig_alns(i, alns, all_chimeras[i], min_len)
+        print("Possibly chimeric", i, all_chimeras[i])
+        # contig, alns, chroms, l
+        break_intervals[i] = cluster_contig_alns(i, ret_alns, all_chimeras[i], min_len)
         # If its just going to break it into the same thing, skip it.
-        if len(break_intervals[i]) <= 1:
-            continue
-
-        if gff_file:
-            # If desired, ensure that breakpoints don't disrupt any gff intervals
-            break_intervals[i] = avoid_gff_intervals(break_intervals[i], features[i])
-            features = update_gff(features, break_intervals[i], i)
-
-        # Break contigs according to the final break points
-        contigs_dict = break_contig(contigs_dict, i, break_intervals[i])
-        total_inter_broken += 1
+        if len(break_intervals[i]) > 1:
+            # Remove the alignments. We will add them back later
+            ret_alns.pop(i)
+            alns.pop(i)
+            if gff_file:
+                # If desired, ensure that breakpoints don't disrupt any gff intervals
+                break_intervals[i] = avoid_gff_intervals(break_intervals[i], features[i])
+                features = update_gff(features, break_intervals[i], i)
+            # Break contigs according to the final break points
+            contigs_dict = break_contig(contigs_fai, contigs_dict, i, break_intervals[i])
+            total_inter_broken += 1
 
     # Next, need to re-align before finding intrachromosomal chimeras
     # First, write out the interchromosomal chimera broken fasta
-    out_inter_fasta = contigs_file[:contigs_file.rfind('.')] + '.inter.chimera.broken.fa'
+    out_inter_fasta = os.path.abspath(os.path.join(
+        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.inter.chimera.broken.fa')))
     if gff_file:
-        out_gff = gff_file[:gff_file.rfind('.')] + '.inter.chimera_broken.gff'
+        out_gff = os.path.abspath(os.path.join(
+        "chimera_break", os.path.basename(gff_file[:gff_file.rfind('.')] + '.inter.chimera_broken.gff')))
         write_broken_files(contigs_dict, out_inter_fasta, features, out_gff)
     else:
         write_broken_files(contigs_dict, out_inter_fasta)
 
     # Next, realign the chimera broken contigs
-    align_breaks('inter', minimap_path, args)
+    align_breaks('inter', out_inter_fasta, args)
 
     # Now, use those new alignments for intrachromosomal chimeras
     log('Reading interchromosomal chimera broken alignments')
     inter_alns = read_paf_alignments(os.path.join('chimera_break', 'inter_contigs_against_ref.paf'))
-    inter_alns = clean_alignments(inter_alns, l=1000, in_exclude_file=exclude_file)
+    inter_alns = clean_alignments(inter_alns, l=intra_wrt_ctg_min, in_exclude_file=exclude_file)
 
     log('Finding intrachromosomally chimeric contigs')
     # Find intrachromosomally chimeric contigs
-    for i in inter_alns.keys():
-        intra = get_intra_contigs(inter_alns[i], 15000, intra_wrt_ref_min, intra_wrt_ctg_min)
+    contigs_dict = dict()
+    marked = set()
+    for i in itertools.chain(ret_alns.keys(), inter_alns.keys()):
+        if i in inter_alns:
+            intra = get_intra_contigs(inter_alns[i], 15000, intra_wrt_ref_min, intra_wrt_ctg_min)
+        else:
+            intra = get_intra_contigs(ret_alns[i], 15000, intra_wrt_ref_min, intra_wrt_ctg_min)
         if intra:
             if gff_file:
                 intra_break_intervals = avoid_gff_intervals(intra[1], features[intra[0]])
@@ -621,34 +607,75 @@ def chimera_breaker(alns, contigs_file, features, log, args):
             # Check if the avoidance of gff intervals pushed the break point to the end of the contig.
             if intra_break_intervals[-1][0] == intra_break_intervals[-1][1]:
                 continue
+            print("Possible intra-chimeric", i)
+            marked.add(i)
 
             # break the contigs and update features if desired
-            contigs_dict = break_contig(contigs_dict, intra[0], intra_break_intervals)
+            contigs_dict = break_contig(contigs_fai, contigs_dict, intra[0], intra_break_intervals)
             total_intra_broken += 1
 
             if gff_file:
                 features = update_gff(features, intra_break_intervals, intra[0])
 
+    log("Removing {} from alns".format(len(marked)))
+    [ret_alns.pop(i, None) for i in marked]
+    [inter_alns.pop(i, None) for i in marked]
+    [alns.pop(i, None) for i in marked]
+
+    ret_alns.update(inter_alns)
+
     # Write out the intrachromosomal information
-    out_intra_fasta = contigs_file[:contigs_file.rfind('.')] + '.intra.chimera.broken.fa'
+    out_intra_fasta = os.path.abspath(os.path.join(
+        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.intra.chimera.broken.fa')))
     if gff_file:
-        out_intra_gff = gff_file[:gff_file.rfind('.')] + '.intra.chimera_broken.gff'
+        out_intra_gff = os.path.abspath(os.path.join(
+            "chimera_break", os.path.basename(gff_file[:gff_file.rfind('.')] + '.intra.chimera_broken.gff')))
         write_broken_files(contigs_dict, out_intra_fasta, features, out_intra_gff)
     else:
         write_broken_files(contigs_dict, out_intra_fasta)
 
     # Re align the contigs
     # Next, realign the chimera broken contigs
-    align_breaks('intra', minimap_path, args)
+    align_breaks('intra', out_intra_fasta, args)
 
     # Read in alignments of intrachromosomal chimeras and proceed with ordering and orientation
     log('Reading intrachromosomal chimera broken alignments')
-    alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'))
-    alns = clean_alignments(alns, l=1000, in_exclude_file=exclude_file)
-    contigs_file = os.path.abspath(os.path.join('chimera_break', out_intra_fasta))
+    intra_alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'))
+    intra_alns = clean_alignments(intra_alns, l=1000, in_exclude_file=exclude_file)
+    ret_alns.update(intra_alns)
+    alns.update(ret_alns)
+    # contigs_file = os.path.abspath(os.path.join('chimera_break', out_intra_fasta))
     log('The total number of interchromasomally chimeric contigs broken is %r' % total_inter_broken)
     log('The total number of intrachromasomally chimeric contigs broken is %r' % total_intra_broken)
-    return alns, contigs_file, features
+    # Now we have to print out all the contigs into the new contigs file
+    out_fasta = os.path.abspath(os.path.join(
+            "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
+    if os.stat(out_intra_fasta).st_size > 0:
+        intra_file = pysam.FastaFile(out_intra_fasta)
+    else:
+        intra_file = dict()
+    if os.stat(out_inter_fasta).st_size > 0:
+        inter_file = pysam.FastaFile(out_inter_fasta)
+    else:
+        inter_file = dict()
+    log("New contigs file: {} (with {} contigs)".format(out_fasta, len(alns)))
+    with pysam.BGZFile(out_fasta, "wb") as out:
+        for key in alns:
+            out.write(">{key}\n".format(**locals()).encode())
+            if key in contigs_fai:
+                store = contigs_fai
+            elif key in intra_file:
+                store = intra_file
+            elif key in inter_file:
+                store = inter_file
+            else:
+                raise KeyError(key)
+            [out.write((_ + "\n").encode()) for _ in re.findall(".{1,60}", store[key])]
+            continue
+    # Index
+    _ = pysam.FastaFile(out_fasta)
+
+    return alns, out_fasta, features
 
 
 def chimera_breaker_with_reads(alns, contigs_file, corr_reads, features, args, log):
@@ -662,7 +689,7 @@ def chimera_breaker_with_reads(alns, contigs_file, corr_reads, features, args, l
     align_reads(minimap_path, t, contigs_file, corr_reads, corr_reads_tech)
     log('Computing contig coverage')
     cov_map = ReadCoverage(os.path.join('ctg_alignments', 'reads_against_ctg.paf'))
-    alns = clean_alignments(alns, l=10000, in_exclude_file=exclude_file, uniq_anchor_filter=True, merge=True)
+    alns = clean_alignments(alns, l=10000, in_exclude_file=exclude_file, uniq_anchor_filter=False, merge=True)
 
     # Get the initial candidate break points.
     candidate_breaks = dict()
@@ -716,20 +743,30 @@ def main():
     parser.add_argument("-T", metavar="sr", type=str, default="", help="Type of reads provided by '-R'. 'sr' and 'corr' accepted for short reads and error corrected long reads respectively.")
     parser.add_argument("-I", type=str, metavar="index_split", default="4G",
                         help="Minimap2: split index for every ~NUM input bases (default: 4G)")
-    parser.add_argument("--mini-extra", type=str, help="Extra flags to pass-through to MiniMap2.")
+    parser.add_argument("--mini-extra", type=str, help="Extra flags to pass-through to MiniMap2.", default="")
+    # Minimum percentage of retained alignments mapped to a different chromosome to start the chimera breaking procedure
     parser.add_argument("-p", metavar="5", type=int, default=5, help=argparse.SUPPRESS)
+    # Minimum length of alignments to consider for the chimera breaking procedure
     parser.add_argument("-l", metavar="10000", type=int, default=10000, help=argparse.SUPPRESS)
+    # Minimum length of alignment to a different chromosome to start the chimera breaking procedure
     parser.add_argument("-r", metavar="100000", type=int, default=100000, help=argparse.SUPPRESS)
+    # intra_wrt_ctg_min - minimum distance *on the contig* between two breaks on the same chromosome for
+    # intrachromosomal breakage procedure
     parser.add_argument("-c", metavar="1000000", type=int, default=1000000, help=argparse.SUPPRESS)
+    # intra_wrt_ref_min - minimum distance between two breaks on the same chromosome for intrachromosomal
+    # breakage procedure
     parser.add_argument("-d", metavar="2000000", type=int, default=2000000, help=argparse.SUPPRESS)
     parser.add_argument("-t", metavar="3", type=int, default=3, help="Number of threads when running minimap.")
     parser.add_argument("-g", metavar="100", type=int, default=100, help="Gap size for padding in pseudomolecules.")
     parser.add_argument("-s", action='store_true', default=False, help="Call structural variants")
     parser.add_argument("-a", metavar="50", type=int, default=50, help=argparse.SUPPRESS)
     parser.add_argument("-f", metavar="10000", type=int, default=10000, help=argparse.SUPPRESS)
-    parser.add_argument("-i", metavar="0.2", type=float, default=0.2, help="Minimum grouping confidence score needed to be localized.")
-    parser.add_argument("-j", metavar="<skip.txt>", type=str, default="", help="List of contigs to automatically put in chr0.")
-    parser.add_argument("-C", action='store_true', default=False, help="Write unplaced contigs individually instead of making a chr0")
+    parser.add_argument("-i", metavar="0.2", type=float, default=0.2,
+                        help="Minimum grouping confidence score needed to be localized.")
+    parser.add_argument("-j", metavar="<skip.txt>", type=str, default="",
+                        help="List of contigs to automatically put in chr0.")
+    parser.add_argument("-C", action='store_true', default=False,
+                        help="Write unplaced contigs individually instead of making a chr0")
     parser.add_argument("-q", "--quality", default=0, type=int, metavar="min. mapping quality",
                         help="Minimum mapping quality for Minimap2 alignments. Default: 0 (no filtering)")
 
@@ -783,10 +820,12 @@ def main():
 
     # Run minimap2
     cmd = '{} -k19 -I {} {} -w19 -t{} {} {} ' \
-          '> contigs_against_ref.paf 2> contigs_against_ref.paf.log'.format(minimap_path, args.I, args.mini_extra,
-                                                                            t,
-                                                                            os.path.relpath(reference_file),
-                                                                            os.path.relpath(contigs_file))
+          '> contigs_against_ref.paf 2> contigs_against_ref.paf.log'.format(
+        minimap_path, args.I,
+        args.mini_extra if args.mini_extra is not None else "",
+        t,
+        os.path.relpath(reference_file),
+        os.path.relpath(contigs_file))
 
     if not os.path.isfile('contigs_against_ref.paf'):
         run(cmd)
@@ -820,7 +859,10 @@ def main():
         log('Assigning contigs')
         all_unique_contigs = dict()
         for i in alns.keys():
-            all_unique_contigs[i] = UniqueContigAlignment(alns[i], use_quality=args.Q)
+            try:
+                all_unique_contigs[i] = UniqueContigAlignment(alns[i], use_quality=args.Q)
+            except AssertionError:
+                raise AssertionError((i, alns[i].query_starts, alns[i].query_ends))
 
         # Add to this the list of headers that did not make it
         write_contig_clusters(all_unique_contigs, group_score_thresh, skip_ctg)

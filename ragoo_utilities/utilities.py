@@ -1,10 +1,47 @@
 import time
 import subprocess
 import operator
+import os
+
 
 """ A collection of various helper functions"""
 
+
 complements = str.maketrans("ACGTNURYSWKMBVDHacgtnuryswkmbvdh", "TGCANAYRSWMKVBHDtgcanayrswmkvbhd")
+
+
+def clean_alignments(in_alns, l=10000, in_exclude_file='', uniq_anchor_filter=False, merge=False, quality=0):
+    # Exclude alignments to undesired reference headers and filter alignment lengths.
+    exclude_list = []
+    if in_exclude_file:
+        with open(os.path.join('..', in_exclude_file)) as f:
+            for line in f:
+                exclude_list.append(line.rstrip().replace('>', '').split()[0])
+
+    empty_headers = []
+    print(l, in_alns.keys())
+    for header in in_alns.keys():
+        in_alns[header].exclude_ref_chroms(exclude_list)
+        print("lengths", l, header, in_alns[header].aln_lens)
+        in_alns[header].filter_lengths(l)
+        print("Filtered lengths (1)", header, l, in_alns[header].aln_lens)
+        if uniq_anchor_filter:
+            in_alns[header].unique_anchor_filter()
+        if quality:
+            in_alns[header].filter_quality(quality)
+        print("Filtered lengths (2)", header, l, in_alns[header].aln_lens)
+
+        if merge:
+            in_alns[header].merge_alns()
+
+        # Check if our filtering has removed all alignments for a contig
+        if len(in_alns[header].ref_headers) == 0:
+            empty_headers.append(header)
+
+    for header in empty_headers:
+        in_alns.pop(header)
+
+    return in_alns
 
 
 def reverse_complement(seq):

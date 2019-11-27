@@ -304,6 +304,7 @@ class UniqueContigAlignment:
     def _get_best_ref_cov(self, alns):
         # Get list of all references chromosomes
         all_chroms = set(alns.ref_headers)
+        assert len(alns.ref_headers) > 0, self.contig
         if len(all_chroms) == 1:
             self.ref_chrom = alns.ref_headers[0]
             self.confidence = 1
@@ -336,7 +337,7 @@ class UniqueContigAlignment:
                 ranges[i] += max(0, j[1] - start_new_terr)
                 max_end = max(max_end, j[1])
 
-        assert ranges
+        assert ranges, self.contig
 
         # I convert to a list and sort the ranges.items() in order to have ties broken in a deterministic way.
         if self._use_quality is False:

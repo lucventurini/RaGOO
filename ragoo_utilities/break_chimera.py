@@ -1,8 +1,6 @@
 from collections import defaultdict
 import copy
-
 from intervaltree import IntervalTree
-
 from ragoo_utilities.ContigAlignment import UniqueContigAlignment
 
 
@@ -16,12 +14,12 @@ def get_ref_parts(alns, l, p, r):
     :return: A list of reference chromosomes to which the input contig significantly aligns to
     """
     all_intervals = defaultdict(list)
-
     # Iterate over all alignments
     for i in range(len(alns.ref_headers)):
         if alns.aln_lens[i] < l:
             continue
 
+        print(alns.contig, alns.ref_headers[i])
         all_intervals[alns.ref_headers[i]].append((alns.ref_starts[i], alns.ref_ends[i]))
 
     ranges = dict()
@@ -57,6 +55,7 @@ def cluster_contig_alns(contig, alns, chroms, l):
     query_pos = []
 
     for i in range(len(ctg_alns.ref_headers)):
+        print(contig, (ctg_alns.query_starts[i], ctg_alns.query_ends[i], i))
         query_pos.append((ctg_alns.query_starts[i], ctg_alns.query_ends[i], i))
 
     final_order = [i[2] for i in sorted(query_pos)]
@@ -148,8 +147,8 @@ def update_gff(features, borders, contig):
     return features
 
 
-def break_contig(contigs_dict, header, break_points):
-    seq = contigs_dict.pop(header)
+def break_contig(contigs_fai, contigs_dict, header, break_points):
+    seq = contigs_fai[header]
     test_seq = ''
     for i in range(len(break_points)):
         contigs_dict[header + '_chimera_broken:' + str(break_points[i][0]) + '-' + str(break_points[i][1])] = seq[break_points[i][0]: break_points[i][1]]
