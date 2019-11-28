@@ -2,6 +2,7 @@ from collections import defaultdict
 import copy
 from intervaltree import IntervalTree
 from ragoo_utilities.ContigAlignment import UniqueContigAlignment
+import numpy as np
 
 
 def get_ref_parts(alns, l, p, r):
@@ -19,7 +20,6 @@ def get_ref_parts(alns, l, p, r):
         if alns.aln_lens[i] < l:
             continue
 
-        print(alns.contig, alns.ref_headers[i])
         all_intervals[alns.ref_headers[i]].append((alns.ref_starts[i], alns.ref_ends[i]))
 
     ranges = dict()
@@ -63,14 +63,18 @@ def cluster_contig_alns(contig, alns, chroms, l):
     for i in final_order:
         final_refs.append(ctg_alns.ref_headers[i])
 
-    return get_borders(final_refs, ctg_alns, final_order)
+    borders = get_borders(final_refs, ctg_alns, final_order)
+    print("Borders", contig, borders, final_refs)
+    return borders
 
 
 def get_borders(ordered_refs, alns, order):
     borders = [0]
     current_ref = ordered_refs[0]
-    for i in range(1, len(ordered_refs)-1):
-        if ordered_refs[i] != current_ref and ordered_refs[i+1] != current_ref:
+    for i in range(1, len(ordered_refs)):
+        if ordered_refs[i] != current_ref and (
+                (i < len(ordered_refs) - 1 and ordered_refs[i+1] != current_ref) or (i == len(ordered_refs) - 1)):
+            print("Breakpoint", current_ref, ordered_refs[i])
             current_ref = ordered_refs[i]
             borders.append(alns.query_ends[order[i-1]])
 
@@ -151,7 +155,9 @@ def break_contig(contigs_fai, contigs_dict, header, break_points):
     seq = contigs_fai[header]
     test_seq = ''
     for i in range(len(break_points)):
-        contigs_dict[header + '_chimera_broken:' + str(break_points[i][0]) + '-' + str(break_points[i][1])] = seq[break_points[i][0]: break_points[i][1]]
+        contigs_dict[header + '_chimera_broken:' +
+                     str(break_points[i][0]) + '-' + str(break_points[i][1])] = seq[
+                                                                                break_points[i][0]: break_points[i][1]]
         test_seq += seq[break_points[i][0]: break_points[i][1]]
 
     assert test_seq == seq
@@ -193,6 +199,11 @@ def get_intra_contigs(alns, l, d, c):
     for i in range(len(ctg_alns.ref_headers) - 1):
         distances_wrt_ctg.append(abs(ctg_alns.query_starts[i + 1] - ctg_alns.query_starts[i]))
 
+    distances_wrt_ctg = np.array(distances_wrt_ctg)
+    distances_wrt_ref = np.array(distances_wrt_ref)
+
+    print("Distances", ctg_alns.contig, distances_wrt_ref)
+
     # Next, assign the following two identities.
     #  1. When ordered by the reference, the alignments start at the beginning or the end of the query
     #  2. For the alignment which will be broken on, is it on the forward or reverse strand.
@@ -204,42 +215,44 @@ def get_intra_contigs(alns, l, d, c):
 
     # This conditional essentially checks if there are any break points for this contig.
     # Returns None otherwise (no return statement)
-    if distances_wrt_ref:
-        if max(distances_wrt_ref) > d:
-            gap_index = distances_wrt_ref.index(max(distances_wrt_ref))
-            a_alns_strands = ctg_alns.strands[:gap_index]
-            if is_query_start:
-                if a_alns_strands.count('-') > a_alns_strands.count('+'):
-                    # The first subcontig is on the reverse strand
-                    return (ctg_alns.contig, [(0, ctg_alns.query_ends[0]), (ctg_alns.query_ends[0], ctg_alns.query_lens[0])])
-                else:
-                    # The first subcontig is on the forward strand.
-                    return (ctg_alns.contig, [(0, ctg_alns.query_ends[gap_index]), (ctg_alns.query_ends[gap_index], ctg_alns.query_lens[0])])
+    if distances_wrt_ref.shape[0] > 0 and distances_wrt_ref.max() > d:
+        gap_index = np.where(distances_wrt_ref == distances_wrt_ref.max())
+        a_alns_strands = ctg_alns.strands[:gap_index]
+        if is_query_start:
+            if a_alns_strands.count('-') > a_alns_strands.count('+'):
+                # The first subcontig is on the reverse strand
+                return (ctg_alns.contig, [(0, ctg_alns.query_ends[0]),
+                                          (ctg_alns.query_ends[0], ctg_alns.query_lens[0])])
             else:
-                # The first subcontig starts at the end of the contig
-                if a_alns_strands.count('-') > a_alns_strands.count('+'):
-                    # The first subcontig is on the reverse strand
-                    return (ctg_alns.contig, [(0, ctg_alns.query_starts[gap_index]), (ctg_alns.query_starts[gap_index], ctg_alns.query_lens[0])])
-                else:
-                    # The first subcontig is on the forward strand.
-                    return (ctg_alns.contig, [(0, ctg_alns.query_starts[0]), (ctg_alns.query_starts[0], ctg_alns.query_lens[0])])
-
-        if max(distances_wrt_ctg) > c:
-            gap_index = distances_wrt_ctg.index(max(distances_wrt_ctg)) + 1
-            a_alns_strands = ctg_alns.strands[:gap_index]
-            if is_query_start:
-                if a_alns_strands.count('-') > a_alns_strands.count('+'):
-                    # The first subcontig is on the reverse strand
-                    return (ctg_alns.contig, [(0, ctg_alns.query_ends[0]), (ctg_alns.query_ends[0], ctg_alns.query_lens[0])])
-                else:
-                    # The first subcontig is on the forward strand.
-                    return (ctg_alns.contig, [(0, ctg_alns.query_ends[gap_index]), (ctg_alns.query_ends[gap_index], ctg_alns.query_lens[0])])
+                # The first subcontig is on the forward strand.
+                return (ctg_alns.contig, [(0, ctg_alns.query_ends[gap_index]),
+                                          (ctg_alns.query_ends[gap_index], ctg_alns.query_lens[0])])
+        else:
+            # The first subcontig starts at the end of the contig
+            if a_alns_strands.count('-') > a_alns_strands.count('+'):
+                # The first subcontig is on the reverse strand
+                return (ctg_alns.contig, [(0, ctg_alns.query_starts[gap_index]), (ctg_alns.query_starts[gap_index], ctg_alns.query_lens[0])])
             else:
-                # The first subcontig starts at the end of the contig
-                if a_alns_strands.count('-') > a_alns_strands.count('+'):
-                    # The first subcontig is on the reverse strand
-                    return (ctg_alns.contig, [(0, ctg_alns.query_starts[gap_index-1]), (ctg_alns.query_starts[gap_index-1], ctg_alns.query_lens[0])])
-                else:
-                    # The first subcontig is on the forward strand.
-                    return (ctg_alns.contig, [(0, ctg_alns.query_starts[0]), (ctg_alns.query_starts[0], ctg_alns.query_lens[0])])
+                # The first subcontig is on the forward strand.
+                return (ctg_alns.contig, [(0, ctg_alns.query_starts[0]), (ctg_alns.query_starts[0], ctg_alns.query_lens[0])])
 
+    elif distances_wrt_ctg.shape[0] > 0 and distances_wrt_ctg.max() > c:
+        gap_index = distances_wrt_ctg.index(max(distances_wrt_ctg)) + 1
+        a_alns_strands = ctg_alns.strands[:gap_index]
+        if is_query_start:
+            if a_alns_strands.count('-') > a_alns_strands.count('+'):
+                # The first subcontig is on the reverse strand
+                return (ctg_alns.contig, [(0, ctg_alns.query_ends[0]), (ctg_alns.query_ends[0], ctg_alns.query_lens[0])])
+            else:
+                # The first subcontig is on the forward strand.
+                return (ctg_alns.contig, [(0, ctg_alns.query_ends[gap_index]), (ctg_alns.query_ends[gap_index], ctg_alns.query_lens[0])])
+        else:
+            # The first subcontig starts at the end of the contig
+            if a_alns_strands.count('-') > a_alns_strands.count('+'):
+                # The first subcontig is on the reverse strand
+                return (ctg_alns.contig, [(0, ctg_alns.query_starts[gap_index-1]), (ctg_alns.query_starts[gap_index-1], ctg_alns.query_lens[0])])
+            else:
+                # The first subcontig is on the forward strand.
+                return (ctg_alns.contig, [(0, ctg_alns.query_starts[0]), (ctg_alns.query_starts[0], ctg_alns.query_lens[0])])
+    else:
+        return None

@@ -19,17 +19,13 @@ def clean_alignments(in_alns, l=10000, in_exclude_file='', uniq_anchor_filter=Fa
                 exclude_list.append(line.rstrip().replace('>', '').split()[0])
 
     empty_headers = []
-    print(l, in_alns.keys())
     for header in in_alns.keys():
         in_alns[header].exclude_ref_chroms(exclude_list)
-        print("lengths", l, header, in_alns[header].aln_lens)
         in_alns[header].filter_lengths(l)
-        print("Filtered lengths (1)", header, l, in_alns[header].aln_lens)
         if uniq_anchor_filter:
             in_alns[header].unique_anchor_filter()
         if quality:
             in_alns[header].filter_quality(quality)
-        print("Filtered lengths (2)", header, l, in_alns[header].aln_lens)
 
         if merge:
             in_alns[header].merge_alns()

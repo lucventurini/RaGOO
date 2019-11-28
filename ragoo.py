@@ -404,10 +404,11 @@ def write_broken_files(in_contigs, in_contigs_name, in_gff=None, in_gff_name=Non
                 for j in in_gff[i]:
                     f.write(str(j) + '\n')
 
-    with open(in_contigs_name, 'w') as f:
+    with pysam.BGZFile(in_contigs_name.rstrip(".gz") + ".gz", "wb") as out:
         for i in in_contigs.keys():
-            f.write('>' + i + '\n')
-            f.write(in_contigs[i] + '\n')
+            print("Printing", i)
+            out.write(('>' + i + '\n').encode())
+            out.write(("\n".join(re.findall(".{1,60}", in_contigs[i])) + '\n').encode())
 
     os.chdir(current_path)
 
@@ -538,14 +539,12 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     ret_alns = clean_alignments(copied,
                                 l=min_len, in_exclude_file=exclude_file, uniq_anchor_filter=False)
     # Process contigs
-    print(ret_alns.keys(), min_len)
     log('Getting contigs')
     contigs_fai = pysam.FastaFile(os.path.relpath(contigs_file))
 
     log('Finding interchromosomally chimeric contigs')
     all_chimeras = dict()
     for i in ret_alns.keys():
-        print(i)
         ref_parts = get_ref_parts(ret_alns[i], min_len, min_break_pct, min_range)
         if len(ref_parts) > 1:
             all_chimeras[i] = ref_parts
@@ -555,7 +554,6 @@ def chimera_breaker(alns, contigs_file, features, log, args):
 
     contigs_dict = dict()
     for i in all_chimeras.keys():
-        print("Possibly chimeric", i, all_chimeras[i])
         # contig, alns, chroms, l
         break_intervals[i] = cluster_contig_alns(i, ret_alns, all_chimeras[i], min_len)
         # If its just going to break it into the same thing, skip it.
@@ -574,7 +572,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     # Next, need to re-align before finding intrachromosomal chimeras
     # First, write out the interchromosomal chimera broken fasta
     out_inter_fasta = os.path.abspath(os.path.join(
-        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.inter.chimera.broken.fa')))
+        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.inter.chimera.broken.fa.gz')))
     if gff_file:
         out_gff = os.path.abspath(os.path.join(
         "chimera_break", os.path.basename(gff_file[:gff_file.rfind('.')] + '.inter.chimera_broken.gff')))
@@ -596,9 +594,11 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     marked = set()
     for i in itertools.chain(ret_alns.keys(), inter_alns.keys()):
         if i in inter_alns:
-            intra = get_intra_contigs(inter_alns[i], 15000, intra_wrt_ref_min, intra_wrt_ctg_min)
+            intra = get_intra_contigs(inter_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
+            print("Inter", i, intra)
         else:
-            intra = get_intra_contigs(ret_alns[i], 15000, intra_wrt_ref_min, intra_wrt_ctg_min)
+            intra = get_intra_contigs(ret_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
+            print("Global", i, intra)
         if intra:
             if gff_file:
                 intra_break_intervals = avoid_gff_intervals(intra[1], features[intra[0]])
@@ -626,7 +626,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
 
     # Write out the intrachromosomal information
     out_intra_fasta = os.path.abspath(os.path.join(
-        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.intra.chimera.broken.fa')))
+        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.intra.chimera.broken.fa.gz')))
     if gff_file:
         out_intra_gff = os.path.abspath(os.path.join(
             "chimera_break", os.path.basename(gff_file[:gff_file.rfind('.')] + '.intra.chimera_broken.gff')))
@@ -650,11 +650,11 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     # Now we have to print out all the contigs into the new contigs file
     out_fasta = os.path.abspath(os.path.join(
             "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
-    if os.stat(out_intra_fasta).st_size > 0:
+    if os.stat(out_intra_fasta).st_size > 30:
         intra_file = pysam.FastaFile(out_intra_fasta)
     else:
         intra_file = dict()
-    if os.stat(out_inter_fasta).st_size > 0:
+    if os.stat(out_inter_fasta).st_size > 30:
         inter_file = pysam.FastaFile(out_inter_fasta)
     else:
         inter_file = dict()
@@ -729,9 +729,10 @@ def chimera_breaker_with_reads(alns, contigs_file, corr_reads, features, args, l
 
 def main():
 
-    parser = argparse.ArgumentParser(description='order and orient contigs according to minimap2 alignments to a reference (v1.1)')
-    parser.add_argument("contigs", metavar="<contigs.fasta>", type=str, help="fasta file with contigs to be ordered and oriented (gzipped allowed)")
-    parser.add_argument("reference", metavar="<reference.fasta>", type=str, help="reference fasta file (gzipped allowed)")
+    parser = argparse.ArgumentParser(description='order and orient contigs according to minimap2 alignments to a reference (v1.1)',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("contigs", metavar="<contigs.fasta>", type=str, help="fasta file with contigs to be ordered and oriented (b-gzipped allowed)")
+    parser.add_argument("reference", metavar="<reference.fasta>", type=str, help="reference fasta file (b-gzipped allowed)")
     parser.add_argument("-o", metavar="PATH", type=str, default="ragoo_output", help="output directory name", dest="out")
     parser.add_argument("-e", metavar="<exclude.txt>", type=str, default="", help="single column text file of reference headers to ignore")
     parser.add_argument("-gff", metavar="<annotations.gff>", type=str, default=None, help="lift-over gff features to chimera-broken contigs")
@@ -742,12 +743,15 @@ def main():
     parser.add_argument("-R", metavar="<reads.fasta>", type=str, default=None, help="Turns on misassembly correction. Align provided reads to the contigs to aid misassembly correction. fastq or fasta allowed. Gzipped files allowed. Turns off '-b'.")
     parser.add_argument("-T", metavar="sr", type=str, default="", help="Type of reads provided by '-R'. 'sr' and 'corr' accepted for short reads and error corrected long reads respectively.")
     parser.add_argument("-I", type=str, metavar="index_split", default="4G",
-                        help="Minimap2: split index for every ~NUM input bases (default: 4G)")
+                        help="Minimap2: split index for every ~NUM input bases.")
     parser.add_argument("--mini-extra", type=str, help="Extra flags to pass-through to MiniMap2.", default="")
     # Minimum percentage of retained alignments mapped to a different chromosome to start the chimera breaking procedure
-    parser.add_argument("-p", metavar="5", type=int, default=5, help=argparse.SUPPRESS)
+    parser.add_argument("-p", metavar="5", type=int, default=5,
+                        help="Minimum percentage of the contig mapping to a separate location to start the chimera breaking procedure.")
+                        #help=argparse.SUPPRESS)
     # Minimum length of alignments to consider for the chimera breaking procedure
-    parser.add_argument("-l", metavar="10000", type=int, default=10000, help=argparse.SUPPRESS)
+    parser.add_argument("-l", metavar="10000", type=int, default=10000,  # help=argparse.SUPPRESS)
+                        help="Minimum length of the alignment to start a chimera breaking operation.")
     # Minimum length of alignment to a different chromosome to start the chimera breaking procedure
     parser.add_argument("-r", metavar="100000", type=int, default=100000, help=argparse.SUPPRESS)
     # intra_wrt_ctg_min - minimum distance *on the contig* between two breaks on the same chromosome for
@@ -768,7 +772,7 @@ def main():
     parser.add_argument("-C", action='store_true', default=False,
                         help="Write unplaced contigs individually instead of making a chr0")
     parser.add_argument("-q", "--quality", default=0, type=int, metavar="min. mapping quality",
-                        help="Minimum mapping quality for Minimap2 alignments. Default: 0 (no filtering)")
+                        help="Minimum mapping quality for Minimap2 alignments.")
 
     # Get the command line arguments
     args = parser.parse_args()
