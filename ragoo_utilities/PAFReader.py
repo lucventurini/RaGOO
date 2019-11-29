@@ -18,6 +18,12 @@ class PAFLine:
         self.num_match = int(self.line[9])
         self.aln_len = int(self.line[10])
         self.mapq = int(self.line[11])
+        self.as_score = None
+
+        for field in self.line[12:]:
+            if field.startswith("AS:i:"):
+                self.as_score = int(field.replace("AS:i:", ""))
+                break
 
         assert self.query_start <= self.query_end
         assert self.ref_start <= self.ref_end

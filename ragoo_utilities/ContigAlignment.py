@@ -36,6 +36,7 @@ class ContigAlignment:
         self.num_matches = []
         self.aln_lens = []
         self.mapqs = []
+        self.as_scores = []
 
         self._is_unique_anchor_filtered = False
         self._is_merged = False
@@ -101,6 +102,7 @@ class ContigAlignment:
         self.num_matches.append(paf_line.num_match)
         self.aln_lens.append(paf_line.aln_len)
         self.mapqs.append(paf_line.mapq)
+        self.as_scores.append(paf_line.as_score)
 
         # Check that all attribute lists have same length
         all_lens = self.get_attr_lens()
@@ -129,6 +131,7 @@ class ContigAlignment:
         self.num_matches = [self.num_matches[i] for i in hits]
         self.aln_lens = [self.aln_lens[i] for i in hits]
         self.mapqs = [self.mapqs[i] for i in hits]
+        self.as_scores = [self.as_scores[i] for i in hits]
 
     def filter_ref_chroms(self, in_chroms):
         """
@@ -233,6 +236,10 @@ class ContigAlignment:
                 self.num_matches[i] += self.num_matches[j]
                 self.aln_lens[i] = self.ref_ends[i] - self.ref_starts[i]
                 self.mapqs[i] = (self.mapqs[i] + self.mapqs[j])//2
+                if self.as_scores[i] is not None and self.as_scores[j] is not None:
+                    self.as_scores[i] = self.mapqs[i] + self.mapqs[j]
+                elif self.as_scores[j] is not None:
+                    self.as_scores[i] = self.as_scores[j]
 
                 # Remove the redundant alignment
                 self.query_lens.pop(j)
@@ -246,6 +253,7 @@ class ContigAlignment:
                 self.num_matches.pop(j)
                 self.aln_lens.pop(j)
                 self.mapqs.pop(j)
+                self.as_scores.pop(j)
             else:
                 i += 1
                 j += 1
@@ -296,6 +304,12 @@ class UniqueContigAlignment:
         self.ref_chrom = None
         self.confidence = 0.0
         self._use_quality = use_quality
+        if self._use_quality and all([_ is not None for _ in in_contig_aln.as_scores]):
+            self._use_as_score = True
+            self._use_quality = False
+        else:
+            self._use_as_score = False
+
         self._get_best_ref_cov(in_contig_aln)
 
     def __str__(self):
@@ -317,14 +331,20 @@ class UniqueContigAlignment:
 
         # Get all the ranges in reference to all chromosomes
         all_intervals = defaultdict(list)
-        best_chrom, best_quality = None, -1
+        best_chrom, best_quality, best_as_score = None, -1, -1
         for i in range(len(alns.ref_headers)):
             this_range = (alns.ref_starts[i], alns.ref_ends[i])
             this_chrom = alns.ref_headers[i]
             this_quality = alns.mapqs[i]
-            if best_quality < this_quality:
+            this_as_score = alns.as_scores[i]
+            if self._use_as_score is False and best_quality < this_quality:
                 best_chrom = this_chrom
                 best_quality = this_quality
+                best_as_score = this_as_score
+            elif self._use_as_score is True and best_as_score < this_as_score:
+                best_chrom = this_chrom
+                best_quality = this_quality
+                best_as_score = this_as_score
             all_intervals[this_chrom].append(this_range)
 
         # For each chromosome, sort the range and get the union interval length.
@@ -340,9 +360,8 @@ class UniqueContigAlignment:
         assert ranges, self.contig
 
         # I convert to a list and sort the ranges.items() in order to have ties broken in a deterministic way.
-        if self._use_quality is False:
-            max_chrom = max(sorted(list(ranges.items())), key=operator.itemgetter(1))[0]
-            self.ref_chrom = max_chrom
+        if self._use_quality is False and self._use_as_score is False:
+            self.ref_chrom = max(sorted(list(ranges.items())), key=operator.itemgetter(1))[0]
         else:
             self.ref_chrom = best_chrom
 
@@ -363,6 +382,11 @@ class LongestContigAlignment:
 
     def __init__(self, in_contig_aln, use_quality=False):
         self._use_quality = use_quality
+        if self._use_quality and all([_ is not None for _ in in_contig_aln.as_scores]):
+            self._use_as_score = True
+            self._use_quality = False
+        else:
+            self._use_as_score = False
         self.best_index = self._get_best_index(in_contig_aln)
         self.contig = in_contig_aln.contig
         self.ref_start = in_contig_aln.ref_starts[self.best_index]
