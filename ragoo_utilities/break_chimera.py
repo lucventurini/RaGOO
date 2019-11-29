@@ -55,7 +55,6 @@ def cluster_contig_alns(contig, alns, chroms, l):
     query_pos = []
 
     for i in range(len(ctg_alns.ref_headers)):
-        print(contig, (ctg_alns.query_starts[i], ctg_alns.query_ends[i], i))
         query_pos.append((ctg_alns.query_starts[i], ctg_alns.query_ends[i], i))
 
     final_order = [i[2] for i in sorted(query_pos)]
@@ -64,7 +63,6 @@ def cluster_contig_alns(contig, alns, chroms, l):
         final_refs.append(ctg_alns.ref_headers[i])
 
     borders = get_borders(final_refs, ctg_alns, final_order)
-    print("Borders", contig, borders, final_refs)
     return borders
 
 
@@ -74,7 +72,6 @@ def get_borders(ordered_refs, alns, order):
     for i in range(1, len(ordered_refs)):
         if ordered_refs[i] != current_ref and (
                 (i < len(ordered_refs) - 1 and ordered_refs[i+1] != current_ref) or (i == len(ordered_refs) - 1)):
-            print("Breakpoint", current_ref, ordered_refs[i])
             current_ref = ordered_refs[i]
             borders.append(alns.query_ends[order[i-1]])
 
@@ -199,10 +196,8 @@ def get_intra_contigs(alns, l, d, c):
     for i in range(len(ctg_alns.ref_headers) - 1):
         distances_wrt_ctg.append(abs(ctg_alns.query_starts[i + 1] - ctg_alns.query_starts[i]))
 
-    distances_wrt_ctg = np.array(distances_wrt_ctg)
-    distances_wrt_ref = np.array(distances_wrt_ref)
-
-    print("Distances", ctg_alns.contig, distances_wrt_ref)
+    # distances_wrt_ctg = np.array(distances_wrt_ctg)
+    # distances_wrt_ref = np.array(distances_wrt_ref)
 
     # Next, assign the following two identities.
     #  1. When ordered by the reference, the alignments start at the beginning or the end of the query
@@ -215,8 +210,8 @@ def get_intra_contigs(alns, l, d, c):
 
     # This conditional essentially checks if there are any break points for this contig.
     # Returns None otherwise (no return statement)
-    if distances_wrt_ref.shape[0] > 0 and distances_wrt_ref.max() > d:
-        gap_index = np.where(distances_wrt_ref == distances_wrt_ref.max())
+    if len(distances_wrt_ref) > 0 and max(distances_wrt_ref) > d:
+        gap_index = distances_wrt_ref.index(max(distances_wrt_ref))
         a_alns_strands = ctg_alns.strands[:gap_index]
         if is_query_start:
             if a_alns_strands.count('-') > a_alns_strands.count('+'):
@@ -231,21 +226,25 @@ def get_intra_contigs(alns, l, d, c):
             # The first subcontig starts at the end of the contig
             if a_alns_strands.count('-') > a_alns_strands.count('+'):
                 # The first subcontig is on the reverse strand
-                return (ctg_alns.contig, [(0, ctg_alns.query_starts[gap_index]), (ctg_alns.query_starts[gap_index], ctg_alns.query_lens[0])])
+                return (ctg_alns.contig, [(0, ctg_alns.query_starts[gap_index]),
+                                          (ctg_alns.query_starts[gap_index], ctg_alns.query_lens[0])])
             else:
                 # The first subcontig is on the forward strand.
-                return (ctg_alns.contig, [(0, ctg_alns.query_starts[0]), (ctg_alns.query_starts[0], ctg_alns.query_lens[0])])
+                return (ctg_alns.contig, [(0, ctg_alns.query_starts[0]),
+                                          (ctg_alns.query_starts[0], ctg_alns.query_lens[0])])
 
-    elif distances_wrt_ctg.shape[0] > 0 and distances_wrt_ctg.max() > c:
+    elif len(distances_wrt_ctg) > 0 and max(distances_wrt_ctg) > c:
         gap_index = distances_wrt_ctg.index(max(distances_wrt_ctg)) + 1
         a_alns_strands = ctg_alns.strands[:gap_index]
         if is_query_start:
             if a_alns_strands.count('-') > a_alns_strands.count('+'):
                 # The first subcontig is on the reverse strand
-                return (ctg_alns.contig, [(0, ctg_alns.query_ends[0]), (ctg_alns.query_ends[0], ctg_alns.query_lens[0])])
+                return (ctg_alns.contig, [(0, ctg_alns.query_ends[0]),
+                                          (ctg_alns.query_ends[0], ctg_alns.query_lens[0])])
             else:
                 # The first subcontig is on the forward strand.
-                return (ctg_alns.contig, [(0, ctg_alns.query_ends[gap_index]), (ctg_alns.query_ends[gap_index], ctg_alns.query_lens[0])])
+                return (ctg_alns.contig, [(0, ctg_alns.query_ends[gap_index]),
+                                          (ctg_alns.query_ends[gap_index], ctg_alns.query_lens[0])])
         else:
             # The first subcontig starts at the end of the contig
             if a_alns_strands.count('-') > a_alns_strands.count('+'):

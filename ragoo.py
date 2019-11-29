@@ -85,19 +85,22 @@ def write_misasm_broken_ctgs(contigs_file, breaks, out_prefix, in_gff=None, in_g
                     out_gff.write(str(j) + '\n')
 
     x = pysam.FastaFile(os.path.relpath(contigs_file))
-    with open(out_prefix + ".misasm.break.fa", 'w') as outfile:
+    with pysam.BGZFile(out_prefix + ".misasm.break.fa.gz", 'wb') as outfile:
         for header in x.references:
             seq = x.fetch(header)
             if header not in breaks:
-                outfile.write(">" + header + "\n")
-                print(*re.findall(".{1,60}", seq), sep="\n", file=outfile)
+                outfile.write((">" + header + "\n").encode())
+                outfile.write(("\n".join(re.findall(".{1,60}", seq)) + "\n" ).encode())
             else:
                 # Break the contig
                 ctg_len = x.get_reference_length(header)
                 break_list = [0] + sorted(breaks[header]) + [ctg_len]
                 for i in range(len(break_list) - 1):
-                    outfile.write(">" + header + "_misasm_break:" + str(break_list[i]) + "-" + str(break_list[i+1]) + "\n")
-                    print(*re.findall(".{1,60}", seq[break_list[i]:break_list[i+1]]), sep="\n", file=outfile)
+                    outfile.write(
+                        (">" + header + "_misasm_break:" + str(break_list[i]) + "-" + str(break_list[i+1]) + "\n").encode())
+                    outfile.write(("\n".join(
+                        re.findall(".{1,60}", seq[break_list[i]:break_list[i+1]])) + "\n").encode())
+    _ = pysam.FastaFile(out_prefix + ".misasm.break.fa.gz")
     os.chdir(current_path)
 
 
@@ -108,7 +111,7 @@ def align_misasm_broken(out_prefix, args):
     t = args.t
     reference_file = args.reference
 
-    ctgs_file = out_prefix + ".misasm.break.fa"
+    ctgs_file = out_prefix + ".misasm.break.fa.gz"
     cmd = '{} -k19 -w19 -t{} {}  {} ' \
           '> contigs_brk_against_ref.paf 2> contigs_brk_against_ref.paf.log'.format(minimap_path, t,
                                                                                     os.path.relpath(reference_file),
@@ -322,14 +325,14 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
 
     pad = 'N' * gap_size
 
-    with open('ragoo.fasta', 'w') as outfile:
+    with pysam.BGZFile('ragoo.fasta.gz', 'w') as outfile:
         for this_chrom in all_chroms:
             orderings_file = os.path.join('orderings', this_chrom + '_orderings.txt')
             orderings = get_orderings(orderings_file)
             curr_seq = []
             curr_total = 0
             if orderings:
-                print(">" + this_chrom + "_RaGOO", file=outfile)
+                outfile.write((">" + this_chrom + "_RaGOO" + "\n").encode())
                 for line in orderings:
                     # Mark that we have seen this contig
                     remaining_contig_headers.remove(line[0])
@@ -343,12 +346,12 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
 
                     if curr_total >= 10 ** 7:  # Print out every 10Mbps
                         wrapped = re.findall(".{1,60}", pad.join(curr_seq))
-                        print(*wrapped[:-1], sep="\n", file=outfile)
+                        outfile.write(("\n".join(wrapped[:-1]) + "\n").encode())
                         curr_seq = [wrapped[-1]]
                         curr_total = len(wrapped[-1])
 
                 wrapped = re.findall(".{1,60}", pad.join(curr_seq))
-                print(*wrapped, sep="\n", file=outfile)
+                outfile.write(("\n".join(wrapped) + "\n").encode())
 
         # Get unincorporated sequences and place them in Chr0
         if remaining_contig_headers:
@@ -356,7 +359,7 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
                 curr_seq = []
                 curr_total = 0
                 chr0_headers = []
-                print(">Chr0_RaGOO", file=outfile)
+                outfile.write(">Chr0_RaGOO\n".encode())
                 for header in remaining_contig_headers:
                     _ = x.fetch(header)
                     curr_total += x.get_reference_length(header)
@@ -364,12 +367,12 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
                     chr0_headers.append(header)
                     if curr_total >= 10 ** 7:  # Print out every 10Mbps
                         wrapped = re.findall(".{1,60}", pad.join(curr_seq))
-                        print(*wrapped[:-1], sep="\n", file=outfile)
+                        outfile.write(("\n".join(wrapped[:-1]) + "\n").encode())
                         curr_seq = [wrapped[-1]]
                         curr_total = len(wrapped[-1])
 
                 wrapped = re.findall(".{1,60}", pad.join(curr_seq))
-                print(*wrapped, sep="\n", file=outfile)
+                outfile.write(("\n".join(wrapped) + "\n").encode())
                 # Write out the list of chr0 headers
                 f_chr0_g = open(os.path.join('groupings', 'Chr0_contigs.txt'), 'w')
                 f_chr0_o = open(os.path.join('orderings', 'Chr0_orderings.txt'), 'w')
@@ -381,14 +384,17 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
             else:
                 # Instead of making a chromosome 0, add the unplaced sequences as is.
                 for header in remaining_contig_headers:
-                    print(">{}".format(header), file=outfile)
-                    print(*re.findall(".{1,60}", pad.join(x.fetch(header))), sep="\n", file=outfile)
+                    outfile.write(">{}\n".format(header).encode())
+                    outfile.write(("\n".join(re.findall(".{1,60}", pad.join(x.fetch(header)))) + "\n").encode())
                     f_chr0_g = open(os.path.join('groupings', header[1:] + '_contigs.txt'), 'w')
                     f_chr0_o = open(os.path.join('orderings' + header[1:] + '_orderings.txt'), 'w')
                     f_chr0_g.write(header[1:] + "\t" + "0" + '\n')
                     f_chr0_o.write(header[1:] + '\t' + "+" + '\t' + "0" + '\t' + "0" + '\n')
                     f_chr0_g.close()
                     f_chr0_o.close()
+
+    _ = pysam.FastaFile("ragoo.fasta.gz")
+    return
 
 
 def write_broken_files(in_contigs, in_contigs_name, in_gff=None, in_gff_name=None):
@@ -406,7 +412,6 @@ def write_broken_files(in_contigs, in_contigs_name, in_gff=None, in_gff_name=Non
 
     with pysam.BGZFile(in_contigs_name.rstrip(".gz") + ".gz", "wb") as out:
         for i in in_contigs.keys():
-            print("Printing", i)
             out.write(('>' + i + '\n').encode())
             out.write(("\n".join(re.findall(".{1,60}", in_contigs[i])) + '\n').encode())
 
@@ -595,10 +600,8 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     for i in itertools.chain(ret_alns.keys(), inter_alns.keys()):
         if i in inter_alns:
             intra = get_intra_contigs(inter_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
-            print("Inter", i, intra)
         else:
             intra = get_intra_contigs(ret_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
-            print("Global", i, intra)
         if intra:
             if gff_file:
                 intra_break_intervals = avoid_gff_intervals(intra[1], features[intra[0]])
@@ -607,7 +610,6 @@ def chimera_breaker(alns, contigs_file, features, log, args):
             # Check if the avoidance of gff intervals pushed the break point to the end of the contig.
             if intra_break_intervals[-1][0] == intra_break_intervals[-1][1]:
                 continue
-            print("Possible intra-chimeric", i)
             marked.add(i)
 
             # break the contigs and update features if desired
@@ -645,8 +647,8 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     ret_alns.update(intra_alns)
     alns.update(ret_alns)
     # contigs_file = os.path.abspath(os.path.join('chimera_break', out_intra_fasta))
-    log('The total number of interchromasomally chimeric contigs broken is %r' % total_inter_broken)
-    log('The total number of intrachromasomally chimeric contigs broken is %r' % total_intra_broken)
+    log('The total number of interchromosomally chimeric contigs broken is %r' % total_inter_broken)
+    log('The total number of intrachromosomally chimeric contigs broken is %r' % total_intra_broken)
     # Now we have to print out all the contigs into the new contigs file
     out_fasta = os.path.abspath(os.path.join(
             "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
@@ -723,7 +725,7 @@ def chimera_breaker_with_reads(alns, contigs_file, corr_reads, features, args, l
     alns = read_paf_alignments(os.path.join('ctg_alignments', 'contigs_brk_against_ref.paf'))
     alns = clean_alignments(alns, l=1000, in_exclude_file=exclude_file)
     contigs_file = os.path.abspath(os.path.join('ctg_alignments',
-                                                contigs_file[:contigs_file.rfind('.')] + ".misasm.break.fa"))
+                                                contigs_file[:contigs_file.rfind('.')] + ".misasm.break.fa.gz"))
     return alns, contigs_file, features
 
 
