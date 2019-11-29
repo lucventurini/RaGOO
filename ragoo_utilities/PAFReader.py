@@ -19,12 +19,24 @@ class PAFLine:
         self.aln_len = int(self.line[10])
         self.mapq = int(self.line[11])
         self.as_score = None
+        self.primary = None
 
         for field in self.line[12:]:
             if field.startswith("AS:i:"):
                 self.as_score = int(field.replace("AS:i:", ""))
-                break
+                if self.primary is not None:
+                    break
+            elif field.startswith("tp:A:"):
+                if field.endswith(("P", "I")):
+                    self.primary = True
+                elif field.endswith(("S", "i")):
+                    self.primary = False
+                else:
+                    raise ValueError(field)
+                if self.as_score is not None:
+                    break
 
+        assert self.primary is not None
         assert self.query_start <= self.query_end
         assert self.ref_start <= self.ref_end
 

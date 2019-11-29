@@ -14,7 +14,7 @@ class ContigAlignment:
 
     """
 
-    def __init__(self, in_contig):
+    def __init__(self, in_contig, use_primaries=False):
         """
         Each object will refer to a single contig via its header name.
 
@@ -37,9 +37,14 @@ class ContigAlignment:
         self.aln_lens = []
         self.mapqs = []
         self.as_scores = []
+        self.primaries = []
+        self._use_primaries = use_primaries
 
         self._is_unique_anchor_filtered = False
         self._is_merged = False
+
+    def __len__(self):
+        return len(self.ref_headers)
 
     def __repr__(self):
         return '<ContigAlignment' + self.contig + '>'
@@ -88,6 +93,10 @@ class ContigAlignment:
         The only way to add alignments for this contig. Only accepts a PAFLine type object which represents
         as single line of a paf file.
         """
+
+        if self._use_primaries and paf_line.primary is False:
+            return
+
         if not paf_line.contig == self.contig:
             raise ValueError('Only can add alignments with query header %s' % self.contig)
 
@@ -120,6 +129,7 @@ class ContigAlignment:
 
     def rearrange_alns(self, hits):
         """ Generally re structure the alignments according to 'hits', an ordered list of indices. """
+        self.remove_non_primaries()
         self.query_lens = [self.query_lens[i] for i in hits]
         self.query_starts = [self.query_starts[i] for i in hits]
         self.query_ends = [self.query_ends[i] for i in hits]
@@ -137,6 +147,7 @@ class ContigAlignment:
         """
         Given a list of chromosomes, mutate this object so as to only include alignments to those chromosomes.
         """
+        self.remove_non_primaries()
         hits = []
         for i in range(len(self.ref_headers)):
             if self.ref_headers[i] in in_chroms:
@@ -145,6 +156,7 @@ class ContigAlignment:
         self.rearrange_alns(hits)
 
     def sort_by_ref(self):
+        self.remove_non_primaries()
         ref_pos = []
         for i in range(len(self.ref_headers)):
             ref_pos.append((self.ref_headers[i], self.ref_starts[i], self.ref_ends[i], i))
@@ -153,6 +165,7 @@ class ContigAlignment:
         self.rearrange_alns(hits)
 
     def sort_by_query(self):
+        self.remove_non_primaries()
         q_pos = []
         for i in range(len(self.ref_headers)):
             q_pos.append((self.query_starts[i], self.query_ends[i], i))
@@ -161,6 +174,7 @@ class ContigAlignment:
         self.rearrange_alns(hits)
 
     def exclude_ref_chroms(self, exclude_list):
+        self.remove_non_primaries()
         hits = []
         for i in range(len(self.ref_headers)):
             if self.ref_headers[i] not in exclude_list:
@@ -169,6 +183,7 @@ class ContigAlignment:
         self.rearrange_alns(hits)
 
     def filter_lengths(self, l):
+        self.remove_non_primaries()
         hits = []
         for i in range(len(self.ref_headers)):
             if self.aln_lens[i] > l:
@@ -177,6 +192,7 @@ class ContigAlignment:
         self.rearrange_alns(hits)
 
     def filter_quality(self, q):
+        self.remove_non_primaries()
         hits = []
         for i in range(len(self.ref_headers)):
             if self.mapqs[i] >= q:
@@ -197,6 +213,7 @@ class ContigAlignment:
         assembly." Bioinformatics 32.19 (2016): 3021-3023.
         """
 
+        self.remove_non_primaries()
         if not self._is_unique_anchor_filtered:
             lines_by_query = []
             for i, j in zip(self.query_starts, self.query_ends):
@@ -214,6 +231,7 @@ class ContigAlignment:
         :return:
         """
         # Sort the alignments
+        self.remove_non_primaries()
         self.sort_by_ref()
 
         # Might also want to filter out low identity alignments
@@ -254,6 +272,7 @@ class ContigAlignment:
                 self.aln_lens.pop(j)
                 self.mapqs.pop(j)
                 self.as_scores.pop(j)
+                self.primaries.pop(j)
             else:
                 i += 1
                 j += 1
@@ -284,6 +303,27 @@ class ContigAlignment:
             all_candidates.append(max(self.query_ends[i-1], self.query_starts[i]))
 
         return all_candidates
+
+    def remove_non_primaries(self):
+        if self._use_primaries is True and any(not _ for _ in self.primaries):
+            j = 0
+            for i in range(len(self.ref_headers)):
+                if self.primaries[i] is False:
+                    self.query_lens.pop(j)
+                    self.query_starts.pop(j)
+                    self.query_ends.pop(j)
+                    self.strands.pop(j)
+                    self.ref_headers.pop(j)
+                    self.ref_lens.pop(j)
+                    self.ref_starts.pop(j)
+                    self.ref_ends.pop(j)
+                    self.num_matches.pop(j)
+                    self.aln_lens.pop(j)
+                    self.mapqs.pop(j)
+                    self.as_scores.pop(j)
+                    self.primaries.pop(j)
+                else:
+                    j += 1
 
 
 class UniqueContigAlignment:

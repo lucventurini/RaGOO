@@ -148,7 +148,7 @@ def write_contig_clusters(unique_dict, thresh, skip_list):
     os.chdir(current_path)
 
 
-def read_paf_alignments(in_paf):
+def read_paf_alignments(in_paf, use_primaries=False):
     # Read in PAF alignments
     # Initialize a dictionary where key is contig header, and value is ContigAlignment.
     alns = dict()
@@ -157,8 +157,12 @@ def read_paf_alignments(in_paf):
         if paf_line.contig in alns:
             alns[paf_line.contig].add_alignment(paf_line)
         else:
-            alns[paf_line.contig] = ContigAlignment(paf_line.contig)
+            alns[paf_line.contig] = ContigAlignment(paf_line.contig, use_primaries=use_primaries)
             alns[paf_line.contig].add_alignment(paf_line)
+
+    if use_primaries is True:
+        assert all(len(alns[current]) > 0 for current in alns)
+
     return alns
 
 
@@ -590,7 +594,8 @@ def chimera_breaker(alns, contigs_file, features, log, args):
 
     # Now, use those new alignments for intrachromosomal chimeras
     log('Reading interchromosomal chimera broken alignments')
-    inter_alns = read_paf_alignments(os.path.join('chimera_break', 'inter_contigs_against_ref.paf'))
+    inter_alns = read_paf_alignments(os.path.join('chimera_break', 'inter_contigs_against_ref.paf'),
+                                     use_primaries=args.use_primaries)
     inter_alns = clean_alignments(inter_alns, l=intra_wrt_ctg_min, in_exclude_file=exclude_file)
 
     log('Finding intrachromosomally chimeric contigs')
@@ -642,7 +647,8 @@ def chimera_breaker(alns, contigs_file, features, log, args):
 
     # Read in alignments of intrachromosomal chimeras and proceed with ordering and orientation
     log('Reading intrachromosomal chimera broken alignments')
-    intra_alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'))
+    intra_alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'),
+                                     use_primaries=args.use_primaries)
     intra_alns = clean_alignments(intra_alns, l=1000, in_exclude_file=exclude_file)
     ret_alns.update(intra_alns)
     alns.update(ret_alns)
@@ -738,6 +744,8 @@ def main():
     parser.add_argument("-o", metavar="PATH", type=str, default="ragoo_output", help="output directory name", dest="out")
     parser.add_argument("-e", metavar="<exclude.txt>", type=str, default="", help="single column text file of reference headers to ignore")
     parser.add_argument("-gff", metavar="<annotations.gff>", type=str, default=None, help="lift-over gff features to chimera-broken contigs")
+    parser.add_argument("-up", "--use-primaries", action="store_true", default=False,
+                        help="Ignore non-primary alignments.")
     parser.add_argument("-m", metavar="PATH", type=str, default="minimap2", help='path to minimap2 executable')
     parser.add_argument("-b", action='store_true', default=False, help="Break chimeric contigs")
     parser.add_argument("-Q", action="store_true", default=False,
@@ -839,7 +847,7 @@ def main():
     # Read in the minimap2 alignments just generated
     if not os.path.exists(os.path.join("orderings", "done.txt")):
         log('Reading alignments')
-        alns = read_paf_alignments('contigs_against_ref.paf')
+        alns = read_paf_alignments('contigs_against_ref.paf', use_primaries=args.use_primaries)
         alns = clean_alignments(alns, l=1000, in_exclude_file=exclude_file, quality=args.quality)
 
         # Process the gff file
