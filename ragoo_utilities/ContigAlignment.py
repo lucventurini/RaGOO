@@ -403,6 +403,7 @@ class UniqueContigAlignment:
         if self._use_quality is False and self._use_as_score is False:
             self.ref_chrom = max(sorted(list(ranges.items())), key=operator.itemgetter(1))[0]
         else:
+            assert best_chrom is not None
             self.ref_chrom = best_chrom
 
         # Now get the confidence of this chromosome assignment

@@ -547,9 +547,49 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     copied = deepcopy(alns)
     ret_alns = clean_alignments(copied,
                                 l=min_len, in_exclude_file=exclude_file, uniq_anchor_filter=False)
+
     # Process contigs
     log('Getting contigs')
     contigs_fai = pysam.FastaFile(os.path.relpath(contigs_file))
+
+    out_fasta = os.path.abspath(os.path.join(
+        "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
+
+    if os.path.exists(out_fasta + ".fai"):  # This means that we already have calculated everything.
+        log("Chimera breaking already done, recovering and returning results")
+        inter_alns = read_paf_alignments(os.path.join('chimera_break', 'inter_contigs_against_ref.paf'),
+                                         use_primaries=args.use_primaries)
+        inter_alns = clean_alignments(inter_alns, l=intra_wrt_ctg_min, in_exclude_file=exclude_file)
+        intra_alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'),
+                                         use_primaries=args.use_primaries)
+        intra_alns = clean_alignments(intra_alns, l=1000, in_exclude_file=exclude_file)
+        # Now update ...
+
+        marked = set()
+        chim_pat = re.compile("_chimera.*")
+        for key in intra_alns.keys():
+            key = chim_pat.sub("", key)
+            marked.add(key)
+
+        inter_marked = set()
+        inter_keys = inter_alns.keys()[:]
+        for key in inter_keys:
+            key = chim_pat.sub("", key)
+            if key in marked:
+                inter_alns.remove(key)
+            else:
+                inter_marked.add(key)
+
+        marked = set.union(marked, inter_marked)
+        for key in ret_alns:
+            key = chim_pat.sub("", key)
+            if key in marked:
+                ret_alns.remove(key)
+
+        ret_alns.update(inter_alns)
+        ret_alns.update(intra_alns)
+        return ret_alns, out_fasta, features
+
 
     log('Finding interchromosomally chimeric contigs')
     all_chimeras = dict()
@@ -664,8 +704,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     log('The total number of interchromosomally chimeric contigs broken is %r' % total_inter_broken)
     log('The total number of intrachromosomally chimeric contigs broken is %r' % total_intra_broken)
     # Now we have to print out all the contigs into the new contigs file
-    out_fasta = os.path.abspath(os.path.join(
-            "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
+
     if os.stat(out_intra_fasta).st_size > 30:
         intra_file = pysam.FastaFile(out_intra_fasta)
     else:
