@@ -582,6 +582,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     # First, write out the interchromosomal chimera broken fasta
     out_inter_fasta = os.path.abspath(os.path.join(
         "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.inter.chimera.broken.fa.gz')))
+
     if gff_file:
         out_gff = os.path.abspath(os.path.join(
         "chimera_break", os.path.basename(gff_file[:gff_file.rfind('.')] + '.inter.chimera_broken.gff')))
@@ -589,6 +590,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     else:
         write_broken_files(contigs_dict, out_inter_fasta)
 
+    out_inter_fai = pysam.FastaFile(out_inter_fasta)
     # Next, realign the chimera broken contigs
     align_breaks('inter', out_inter_fasta, args)
 
@@ -605,8 +607,10 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     for i in itertools.chain(ret_alns.keys(), inter_alns.keys()):
         if i in inter_alns:
             intra = get_intra_contigs(inter_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
+            fai = out_inter_fai
         else:
             intra = get_intra_contigs(ret_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
+            fai = contigs_fai
         if intra:
             if gff_file:
                 intra_break_intervals = avoid_gff_intervals(intra[1], features[intra[0]])
@@ -618,7 +622,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
             marked.add(i)
 
             # break the contigs and update features if desired
-            contigs_dict = break_contig(contigs_fai, contigs_dict, intra[0], intra_break_intervals)
+            contigs_dict = break_contig(fai, contigs_dict, intra[0], intra_break_intervals)
             total_intra_broken += 1
 
             if gff_file:
