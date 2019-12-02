@@ -590,7 +590,11 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     else:
         write_broken_files(contigs_dict, out_inter_fasta)
 
-    out_inter_fai = pysam.FastaFile(out_inter_fasta)
+    if os.stat(out_inter_fasta).st_size > 30:
+        inter_file = pysam.FastaFile(out_inter_fasta)
+    else:
+        inter_file = dict()
+
     # Next, realign the chimera broken contigs
     align_breaks('inter', out_inter_fasta, args)
 
@@ -607,7 +611,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     for i in itertools.chain(ret_alns.keys(), inter_alns.keys()):
         if i in inter_alns:
             intra = get_intra_contigs(inter_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
-            fai = out_inter_fai
+            fai = inter_file
         else:
             intra = get_intra_contigs(ret_alns[i], min_len, intra_wrt_ref_min, intra_wrt_ctg_min)
             fai = contigs_fai
@@ -666,10 +670,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
         intra_file = pysam.FastaFile(out_intra_fasta)
     else:
         intra_file = dict()
-    if os.stat(out_inter_fasta).st_size > 30:
-        inter_file = pysam.FastaFile(out_inter_fasta)
-    else:
-        inter_file = dict()
+
     log("New contigs file: {} (with {} contigs)".format(out_fasta, len(alns)))
     with pysam.BGZFile(out_fasta, "wb") as out:
         for key in alns:
