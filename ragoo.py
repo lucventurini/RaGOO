@@ -559,7 +559,7 @@ def _recover_chimera_breaking(ret_alns, out_fasta, args):
         marked.add(key)
 
     inter_marked = set()
-    inter_keys = inter_alns.keys()[:]
+    inter_keys = list(inter_alns.keys())[:]
     for key in inter_keys:
         key = chim_pat.sub("", key)
         if key in marked:
@@ -568,10 +568,10 @@ def _recover_chimera_breaking(ret_alns, out_fasta, args):
             inter_marked.add(key)
 
     marked = set.union(marked, inter_marked)
-    for key in ret_alns:
+    for key in list(ret_alns.keys())[:]:
         key = chim_pat.sub("", key)
         if key in marked:
-            ret_alns.remove(key)
+            ret_alns.pop(key)
 
     ret_alns.update(inter_alns)
     ret_alns.update(intra_alns)
@@ -908,6 +908,7 @@ def main():
     if not os.path.exists(os.path.join("orderings", "done.txt")):
         log('Reading alignments')
         alns = read_paf_alignments('contigs_against_ref.paf', use_primaries=args.use_primaries)
+        log('Cleaning alignments')
         alns = clean_alignments(alns, l=1000, in_exclude_file=exclude_file, quality=args.quality)
 
         # Process the gff file
