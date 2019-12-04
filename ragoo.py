@@ -18,6 +18,7 @@ import argparse
 import re
 import itertools
 from copy import deepcopy
+import pickle
 
 
 def update_misasm_features(features, breaks, contig, ctg_len):
@@ -531,6 +532,52 @@ def align_reads(m_path, num_threads, in_ctg_file, reads, tech='ont'):
     os.chdir(current_path)
 
 
+def _recover_chimera_breaking(ret_alns, out_fasta, args):
+
+    min_range = args.r
+    intra_wrt_ctg_min = args.c
+    exclude_file = args.e
+
+    if os.path.exists(os.path.join("chimera_break", "features.pickle")):
+        features = pickle.load(os.path.join("chimera_break", "features.pickle"))
+    else:
+        features = dict()
+
+    log("Chimera breaking already done, recovering and returning results")
+    inter_alns = read_paf_alignments(os.path.join('chimera_break', 'inter_contigs_against_ref.paf'),
+                                     use_primaries=args.use_primaries)
+    inter_alns = clean_alignments(inter_alns, l=min_range, in_exclude_file=exclude_file)
+    intra_alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'),
+                                     use_primaries=args.use_primaries)
+    intra_alns = clean_alignments(intra_alns, l=intra_wrt_ctg_min, in_exclude_file=exclude_file)
+    # Now update ...
+
+    marked = set()
+    chim_pat = re.compile("_chimera.*")
+    for key in intra_alns.keys():
+        key = chim_pat.sub("", key)
+        marked.add(key)
+
+    inter_marked = set()
+    inter_keys = inter_alns.keys()[:]
+    for key in inter_keys:
+        key = chim_pat.sub("", key)
+        if key in marked:
+            inter_alns.remove(key)
+        else:
+            inter_marked.add(key)
+
+    marked = set.union(marked, inter_marked)
+    for key in ret_alns:
+        key = chim_pat.sub("", key)
+        if key in marked:
+            ret_alns.remove(key)
+
+    ret_alns.update(inter_alns)
+    ret_alns.update(intra_alns)
+    return ret_alns, out_fasta, features
+
+
 def chimera_breaker(alns, contigs_file, features, log, args):
     total_inter_broken = 0
     total_intra_broken = 0
@@ -556,40 +603,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
         "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
 
     if os.path.exists(out_fasta + ".fai"):  # This means that we already have calculated everything.
-        log("Chimera breaking already done, recovering and returning results")
-        inter_alns = read_paf_alignments(os.path.join('chimera_break', 'inter_contigs_against_ref.paf'),
-                                         use_primaries=args.use_primaries)
-        inter_alns = clean_alignments(inter_alns, l=intra_wrt_ctg_min, in_exclude_file=exclude_file)
-        intra_alns = read_paf_alignments(os.path.join('chimera_break', 'intra_contigs_against_ref.paf'),
-                                         use_primaries=args.use_primaries)
-        intra_alns = clean_alignments(intra_alns, l=1000, in_exclude_file=exclude_file)
-        # Now update ...
-
-        marked = set()
-        chim_pat = re.compile("_chimera.*")
-        for key in intra_alns.keys():
-            key = chim_pat.sub("", key)
-            marked.add(key)
-
-        inter_marked = set()
-        inter_keys = inter_alns.keys()[:]
-        for key in inter_keys:
-            key = chim_pat.sub("", key)
-            if key in marked:
-                inter_alns.remove(key)
-            else:
-                inter_marked.add(key)
-
-        marked = set.union(marked, inter_marked)
-        for key in ret_alns:
-            key = chim_pat.sub("", key)
-            if key in marked:
-                ret_alns.remove(key)
-
-        ret_alns.update(inter_alns)
-        ret_alns.update(intra_alns)
-        return ret_alns, out_fasta, features
-
+        return _recover_chimera_breaking(ret_alns, args, out_fasta)
 
     log('Finding interchromosomally chimeric contigs')
     all_chimeras = dict()
@@ -602,6 +616,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
     break_intervals = dict()
 
     contigs_dict = dict()
+    removed = set()
     for i in all_chimeras.keys():
         # contig, alns, chroms, l
         break_intervals[i] = cluster_contig_alns(i, ret_alns, all_chimeras[i], min_len)
@@ -610,6 +625,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
             # Remove the alignments. We will add them back later
             ret_alns.pop(i)
             alns.pop(i)
+            removed.add(i)
             if gff_file:
                 # If desired, ensure that breakpoints don't disrupt any gff intervals
                 break_intervals[i] = avoid_gff_intervals(break_intervals[i], features[i])
