@@ -603,7 +603,7 @@ def chimera_breaker(alns, contigs_file, features, log, args):
         "chimera_break", os.path.basename(contigs_file[:contigs_file.rfind('.')] + '.chimera.broken.fa.gz')))
 
     if os.path.exists(out_fasta + ".fai"):  # This means that we already have calculated everything.
-        return _recover_chimera_breaking(ret_alns, args, out_fasta)
+        return _recover_chimera_breaking(ret_alns, out_fasta, args)
 
     log('Finding interchromosomally chimeric contigs')
     all_chimeras = dict()
