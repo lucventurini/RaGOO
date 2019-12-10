@@ -371,20 +371,23 @@ class UniqueContigAlignment:
 
         # Get all the ranges in reference to all chromosomes
         all_intervals = defaultdict(list)
-        best_chrom, best_quality, best_as_score = None, -1, -1
+        best_chrom, best_quality, best_as_score = None, float("-inf"), float("-inf")
         for i in range(len(alns.ref_headers)):
             this_range = (alns.ref_starts[i], alns.ref_ends[i])
             this_chrom = alns.ref_headers[i]
             this_quality = alns.mapqs[i]
             this_as_score = alns.as_scores[i]
-            if self._use_as_score is False and best_quality < this_quality:
-                best_chrom = this_chrom
-                best_quality = this_quality
-                best_as_score = this_as_score
-            elif self._use_as_score is True and best_as_score < this_as_score:
-                best_chrom = this_chrom
-                best_quality = this_quality
-                best_as_score = this_as_score
+            if self._use_as_score is False:
+                if best_quality < this_quality:
+                    best_chrom = this_chrom
+                    best_quality = this_quality
+                    best_as_score = this_as_score
+            elif self._use_as_score is True:
+                assert this_as_score is not None
+                if best_as_score < this_as_score:
+                    best_chrom = this_chrom
+                    best_quality = this_quality
+                    best_as_score = this_as_score
             all_intervals[this_chrom].append(this_range)
 
         # For each chromosome, sort the range and get the union interval length.
@@ -403,7 +406,7 @@ class UniqueContigAlignment:
         if self._use_quality is False and self._use_as_score is False:
             self.ref_chrom = max(sorted(list(ranges.items())), key=operator.itemgetter(1))[0]
         else:
-            assert best_chrom is not None
+            assert best_chrom is not None, (self.contig, best_chrom, best_quality, best_as_score, alns.as_scores)
             self.ref_chrom = best_chrom
 
         # Now get the confidence of this chromosome assignment
