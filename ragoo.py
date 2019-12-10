@@ -305,7 +305,7 @@ def get_orderings(in_orderings_file):
     return all_orderings
 
 
-def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, chr0=True):
+def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, chr0=True, chimera_broken=None):
     """
     Need to make a translation table for easy lift-over.
     :param in_contigs_file:
@@ -318,6 +318,9 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
     x = pysam.FastaFile(in_contigs_file)
     y = pysam.FastaFile(in_ref)
     remaining_contig_headers = set(x.references)
+    if chimera_broken is not None:
+        chimera_broken=pysam.FastaFile(chimera_broken)
+        remaining_contig_headers.update(set(chimera_broken.references))
 
     # Get all reference chromosomes
     # all_chroms = sorted(list(set([in_unique_contigs[i].ref_chrom for i in in_unique_contigs.keys()])))
@@ -340,9 +343,15 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
                 outfile.write((">" + this_chrom + "_RaGOO" + "\n").encode())
                 for line in orderings:
                     # Mark that we have seen this contig
+                    if line[0] in x:
+                        _ = x.fetch(line[0])
+                        curr_total += x.get_reference_length(line[0])
+                    elif chimera_broken is not None:
+                        _ = chimera_broken.fetch(line[0])
+                        curr_total += chimera_broken.get_reference_length(line[0])
+                    else:
+                        raise KeyError(line[0])
                     remaining_contig_headers.remove(line[0])
-                    _ = x.fetch(line[0])
-                    curr_total += x.get_reference_length(line[0])
                     if line[1] == '+':
                         curr_seq.append(_)
                     else:
@@ -366,8 +375,12 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
                 chr0_headers = []
                 outfile.write(">Chr0_RaGOO\n".encode())
                 for header in remaining_contig_headers:
-                    _ = x.fetch(header)
-                    curr_total += x.get_reference_length(header)
+                    if header in x:
+                        _ = x.fetch(header)
+                        curr_total += x.get_reference_length(header)
+                    elif chimera_broken is not None and header in chimera_broken:
+                        _ = chimera_broken.fetch(header)
+                        curr_total += chimera_broken.get_reference_length(header)
                     curr_seq.append(_)
                     chr0_headers.append(header)
                     if curr_total >= 10 ** 7:  # Print out every 10Mbps
@@ -390,7 +403,10 @@ def create_pseudomolecules(in_contigs_file, out_folder, in_ref, gap_size=100, ch
                 # Instead of making a chromosome 0, add the unplaced sequences as is.
                 for header in remaining_contig_headers:
                     outfile.write(">{}\n".format(header).encode())
-                    outfile.write(("\n".join(re.findall(".{1,60}", pad.join(x.fetch(header)))) + "\n").encode())
+                    if header in x:
+                        outfile.write(("\n".join(re.findall(".{1,60}", pad.join(x.fetch(header)))) + "\n").encode())
+                    elif chimera_broken is not None and header in chimera_broken:
+                        outfile.write(("\n".join(re.findall(".{1,60}", pad.join(chimera_broken.fetch(header)))) + "\n").encode())
                     f_chr0_g = open(os.path.join('groupings', header[1:] + '_contigs.txt'), 'w')
                     f_chr0_o = open(os.path.join('orderings' + header[1:] + '_orderings.txt'), 'w')
                     f_chr0_g.write(header[1:] + "\t" + "0" + '\n')
@@ -561,16 +577,16 @@ def _recover_chimera_breaking(ret_alns, out_fasta, args):
     inter_marked = set()
     inter_keys = list(inter_alns.keys())[:]
     for key in inter_keys:
-        key = chim_pat.sub("", key)
-        if key in marked:
-            inter_alns.remove(key)
+        bait = chim_pat.sub("", key)
+        if bait in marked:
+            inter_alns.pop(key)
         else:
-            inter_marked.add(key)
+            inter_marked.add(bait)
 
     marked = set.union(marked, inter_marked)
     for key in list(ret_alns.keys())[:]:
-        key = chim_pat.sub("", key)
-        if key in marked:
+        # key = chim_pat.sub("", key)
+        if key in marked or key in inter_marked:
             ret_alns.pop(key)
 
     ret_alns.update(inter_alns)
@@ -905,6 +921,10 @@ def main():
         run(cmd)
 
     # Read in the minimap2 alignments just generated
+    chimera_contigs_file = None
+    if os.path.exists(os.path.join("orderings", "done.txt")):
+        if os.path.exists(os.path.join("chimera_break", "genome.fa.chimera.broken.fa.gz.fai")):
+            chimera_contigs_file = os.path.abspath(os.path.join("chimera_break", "genome.fa.chimera.broken.fa.gz"))
     if not os.path.exists(os.path.join("orderings", "done.txt")):
         log('Reading alignments')
         alns = read_paf_alignments('contigs_against_ref.paf', use_primaries=args.use_primaries)
@@ -922,11 +942,11 @@ def main():
         # Break chimeras if desired
         if break_chimeras:
             # Record how many contigs are broken
-            alns, contigs_file, features = chimera_breaker(alns, contigs_file, features=features, log=log, args=args)
+            alns, chimera_contigs_file, features = chimera_breaker(alns, contigs_file, features=features, log=log, args=args)
 
         # Check if misassembly correction is turned on. This is mutually exclusive with chimeric contig correction
         if corr_reads:
-            alns, contigs_file, features = chimera_breaker_with_reads(alns, contigs_file,
+            alns, chimera_contigs_file, features = chimera_breaker_with_reads(alns, contigs_file,
                                                                       corr_reads=corr_reads, features=features,
                                                                       args=args, log=log)
 
@@ -947,8 +967,11 @@ def main():
 
     log('Creating pseudomolecules')
     # File of the contigs, dictionary
-    create_pseudomolecules(os.path.abspath(contigs_file), os.path.realpath(os.getcwd()),
-                           os.path.abspath(reference_file), gap_size=g, chr0=make_chr0)
+    create_pseudomolecules(os.path.abspath(contigs_file),
+                           os.path.realpath(os.getcwd()),
+                           os.path.abspath(reference_file),
+                           chimera_broken=chimera_contigs_file,
+                           gap_size=g, chr0=make_chr0)
 
     if call_svs:
         log('Aligning pseudomolecules to reference')
