@@ -571,7 +571,7 @@ def _recover_chimera_breaking(ret_alns, out_fasta, args):
     marked = set()
     intra_marked = set()
     chim_pat = re.compile("_chimera.*")
-    double_chim_pat = re.compile("(_chimera.*)_chimera")
+    double_chim_pat = re.compile("(_chimera.*)_chimera.*")
     for key in intra_alns.keys():
         intra_marked.add(double_chim_pat.sub("\\1", key))
         marked.add(chim_pat.sub("", key))
