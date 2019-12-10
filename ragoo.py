@@ -569,26 +569,20 @@ def _recover_chimera_breaking(ret_alns, out_fasta, args):
     # Now update ...
 
     marked = set()
+    intra_marked = set()
     chim_pat = re.compile("_chimera.*")
+    double_chim_pat = re.compile("(_chimera.*)_chimera")
     for key in intra_alns.keys():
-        key = chim_pat.sub("", key)
-        marked.add(key)
+        intra_marked.add(double_chim_pat.sub("\\1", key))
+        marked.add(chim_pat.sub("", key))
 
-    inter_marked = set()
     inter_keys = list(inter_alns.keys())[:]
     for key in inter_keys:
-        bait = chim_pat.sub("", key)
-        if bait in marked:
+        marked.add(chim_pat.sub("", key))
+        if key in intra_marked:
             inter_alns.pop(key)
-        else:
-            inter_marked.add(bait)
 
-    marked = set.union(marked, inter_marked)
-    for key in list(ret_alns.keys())[:]:
-        # key = chim_pat.sub("", key)
-        if key in marked or key in inter_marked:
-            ret_alns.pop(key)
-
+    [ret_alns.pop(key, None) for key in marked]
     ret_alns.update(inter_alns)
     ret_alns.update(intra_alns)
     return ret_alns, out_fasta, features
